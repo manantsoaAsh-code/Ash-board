@@ -1,0 +1,6 @@
+{
+  "appId": "com.ashboard.app",
+  "appName": "Ash-board",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

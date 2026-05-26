@@ -1,0 +1,12 @@
+:root {
+  --bg-primary: #020617;
+  --bg-secondary: #0f172a;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --accent: #38bdf8;
+}
+
+.dark-mode-enabled {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
