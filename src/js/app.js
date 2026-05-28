@@ -1,9 +1,17 @@
 ﻿import { BIO_STANDARDS, checkBioStatus, getBioRef, normalizeBioName } from './config/bio-standards.js';
 import { calculateCKDEPI, calculateCockcroftGault, calculateMDRD, calculatePAM } from './core/medical-math.js';
+import { renderBioRefBlock, renderClearanceBlock, autoResize, initAutoResize, formatDateDisplay, getJn, handleSmartBullet, renderParaSortBar, renderParaList, renderAdherence, renderVitals } from './modules/detail-view.js';
+import { renderDashboardPage } from './modules/dashboard-page.js';
+import { renderProfilePage } from './modules/profile-page.js';
+import { renderSettingsPage } from './modules/settings-page.js';
+import { renderLoginPage, renderRegisterPage } from './modules/login-page.js';
+import { renderAboutPage } from './modules/about-page.js';
+import { isAuthenticated, saveToken, clearToken } from './core/auth.js';
 import { storage } from './core/storage.js';
 
 let patients = storage.get('med_dashboard_data_v2', []);
 let currentPatientId = null;
+let currentView = 'dashboard';
 let activeTabId = 'tab-identity';
 let evolutionViewMode = 'edit';
 let currentModalCtx = { idx: null, key: null, subKey: null };
@@ -20,543 +28,134 @@ const PARA_TAGS_LIST = [
 ];
 
 const TAGS = ['Hospitalisé', 'Décédé', 'Sorti', 'Décharge', 'Fuite', 'Au bloc'];
+const AUTH_USER_KEY = 'ashboard_user';
 
-function getParaclinicNumber(patient, aliases) {
-  const list = Array.isArray(patient?.paraclinics) ? patient.paraclinics : [];
-  const normalizedAliases = aliases.map((alias) => normalizeBioName(alias));
-
-  const item = list.find((entry) => {
-    const normalizedType = normalizeBioName(entry?.type);
-
-    return normalizedAliases.some((alias) => normalizedType === alias || normalizedType.includes(alias) || alias.includes(normalizedType));
-  });
-
-  if (!item) return undefined;
-
-  const parsed = Number.parseFloat(item.val);
-
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function getLastWeight(patient) {
-  const vitals = patient?.evolution?.flatMap((entry) => entry?.vitals || []) || [];
-  const parsed = vitals
-    .map((vital) => Number.parseFloat(vital?.poids))
-    .filter((value) => Number.isFinite(value));
-
-  return parsed.length ? parsed[parsed.length - 1] : undefined;
-}
-
-function calcClearance(p) {
-  const result = {};
-
-  const age = Number.parseFloat(p?.identity?.age);
-  const sex = (p?.identity?.sex || 'M').toUpperCase();
-  const creatinine = getParaclinicNumber(p, ['creatinine']);
-  const urea = getParaclinicNumber(p, ['uree']);
-  const weight = getLastWeight(p);
-
-  const weightUsed = Number.isFinite(weight) ? weight : 70;
-
-  result.weightUsed = weightUsed;
-  result.weightIsReal = Number.isFinite(weight);
-
-  if (Number.isFinite(creatinine) && Number.isFinite(age) && age > 0) {
-    result.egfr = Math.round(calculateCKDEPI({ creatinine, age, sex }));
-    result.cg = Math.round(calculateCockcroftGault({ creatinine, age, weight: weightUsed, sex }));
-    result.mdrd = Math.round(calculateMDRD({ creatinine, age, sex }));
-
-    if (result.egfr >= 90) result.stage = { label: 'G1 — Normal ou élevé', css: 'normal', note: '≥90' };
-    else if (result.egfr >= 60) result.stage = { label: 'G2 — Légèrement diminué', css: 'mild', note: '60–89' };
-    else if (result.egfr >= 45) result.stage = { label: 'G3a — Modérément diminué', css: 'moderate', note: '45–59' };
-    else if (result.egfr >= 30) result.stage = { label: 'G3b — Modérément sévère', css: 'moderate', note: '30–44' };
-    else if (result.egfr >= 15) result.stage = { label: 'G4 — Sévèrement diminué', css: 'severe', note: '15–29' };
-    else result.stage = { label: 'G5 — Insuffisance rénale', css: 'failure', note: '<15 (dialyse?)' };
-  }
-
-  if (Number.isFinite(urea) && Number.isFinite(creatinine)) {
-    result.uree = urea;
-    result.ureeCreaRatio = (urea / (creatinine / 88.4)).toFixed(1);
-  }
-
-  return result;
-}
-
-function renderClearanceBlock(p) {
-  const cl = calcClearance(p);
-
-  if (!cl.egfr && !cl.cg && !cl.mdrd && !cl.uree) return '';
-
-  let html = '<div class="clearance-block mt-3"><div class="clearance-title"><i class="fa-solid fa-kidneys mr-1"></i>Calcul Clairance Rénale</div>';
-
-  if (cl.egfr !== undefined) {
-    const stageColorClass = cl.stage.css === 'normal' ? 'text-green-600' : cl.stage.css === 'mild' ? 'text-amber-600' : cl.stage.css === 'moderate' ? 'text-orange-600' : 'text-red-600';
-
-    html += '<div class="flex flex-wrap gap-3 mt-1">';
-    html += `<div><div class="text-[8px] text-gray-400 uppercase font-bold">CKD-EPI (eGFR)</div><div class="clearance-value ${cl.stage.css}">${cl.egfr} <span class="text-xs font-normal text-gray-500">mL/min/1.73m²</span></div><div class="clearance-stage ${stageColorClass}">${cl.stage.label}</div></div>`;
-    html += `<div><div class="text-[8px] text-gray-400 uppercase font-bold">Cockcroft-Gault</div><div class="clearance-value ${cl.stage.css}">${cl.cg} <span class="text-xs font-normal text-gray-500">mL/min</span></div><div class="text-[8px] ${cl.weightIsReal ? 'text-green-600 font-bold' : 'text-gray-400'}">Poids : ${cl.weightUsed} kg ${cl.weightIsReal ? '<i class="fa-solid fa-check-circle"></i> (réel)' : '(estimé)'}</div></div>`;
-    html += `<div><div class="text-[8px] text-gray-400 uppercase font-bold">MDRD</div><div class="clearance-value ${cl.stage.css}">${cl.mdrd} <span class="text-xs font-normal text-gray-500">mL/min/1.73m²</span></div><div class="text-[8px] text-gray-400">Calcul basé sur la créatinine</div></div>`;
-    html += '</div>';
-  }
-
-  if (cl.ureeCreaRatio) {
-    const ratio = parseFloat(cl.ureeCreaRatio);
-    const ratioNote = ratio > 20 ? '⚠️ Possible déshydratation / IRC pré-rénale' : ratio < 10 ? 'Possible cause post-rénale' : 'Normal';
-    const ratioColor = ratio > 20 || ratio < 10 ? 'text-orange-600' : 'text-green-600';
-
-    html += `<div class="mt-2 text-[9px]"><span class="text-gray-400">Ratio Urée/Créat :</span> <b>${cl.ureeCreaRatio}</b> — <span class="${ratioColor} font-bold">${ratioNote}</span></div>`;
-  }
-
-  html += `<div class="text-[8px] text-gray-400 mt-2 italic">Basé sur : âge ${p.identity.age} ans, sexe ${p.identity.sex}.</div></div>`;
-
-  return html;
-}
-
-function renderBioRefBlock(testName, val) {
-
-  if (!val || val.trim() === '') return '';
-
-  const numVal = parseFloat(val);
-
-  if (isNaN(numVal)) return '';
-
-  const refObj = getBioRef(testName);
-
-  if (!refObj) return `<div class="bio-ref-block"><span class="bio-ref-label"><i class="fa-solid fa-circle-question mr-1 text-gray-300"></i>Référence non trouvée pour "<b>${testName}</b>"</span></div>`;
-
-  let tagClass = 'normal';
-
-  let tagIcon = 'fa-check';
-
-  let tagLabel = 'NORMAL';
-
-  if (numVal < refObj.min) { tagClass = 'low'; tagIcon = 'fa-arrow-down'; tagLabel = 'BAS'; }
-
-  else if (numVal > refObj.max) { tagClass = 'high'; tagIcon = 'fa-arrow-up'; tagLabel = 'ÉLEVÉ'; }
-
-  const delta = numVal < refObj.min ? `${(refObj.min - numVal).toFixed(2)} en dessous du seuil` : numVal > refObj.max ? `${(numVal - refObj.max).toFixed(2)} au-dessus du seuil` : 'dans les normes';
-
-  return `<div class="bio-ref-block"><span class="bio-tag ${tagClass}"><i class="fa-solid ${tagIcon} mr-1"></i>${tagLabel}</span><span class="bio-ref-range">${refObj.min}–${refObj.max} ${refObj.unite}</span><span class="bio-ref-label">| ${delta}</span>${refObj.note ? `<span class="text-[8px] text-gray-400 italic">(${refObj.note})</span>` : ''}</div>`;
-
-}
-
-
-
-function autoResize(el) {
-
-  el.style.height = 'auto';
-
-  el.style.height = `${el.scrollHeight}px`;
-
-}
-
-
-
-function initAutoResize() {
-
-  document.querySelectorAll('textarea.auto-resize').forEach((el) => {
-
-    autoResize(el);
-
-    el.addEventListener('input', function () { autoResize(this); });
-
-  });
-
-}
-
-
-
-function checkVitalNormal(key, val) {
-
-  if (val === '' || val === null || val === undefined || isNaN(parseFloat(val))) return false;
-
-  const v = parseFloat(val);
-
-  const ranges = {
-
-    temp: [36.5, 37.5],
-
-    fc: [60, 100],
-
-    fr: [12, 20],
-
-    spo2_aa: [95, 100],
-
-    spo2_o2: [88, 100],
-
-    diurese: [0.5, 3.0],
-
-    tasG: [90, 140],
-
-    tadG: [60, 90],
-
-    tasD: [90, 140],
-
-    tadD: [60, 90],
-
-    pam: [65, 105],
-
-  };
-
-  if (!ranges[key]) return false;
-
-  return v < ranges[key][0] || v > ranges[key][1];
-
-}
-
-
-
-function vitalClass(key, val) {
-
-  return checkVitalNormal(key, val) ? 'abnormal-flash' : '';
-
-}
-
-
-
-function calcPA(nbCig, anneeDebut) {
-
-  if (!nbCig || !anneeDebut || isNaN(nbCig) || isNaN(anneeDebut)) return '--';
-
-  const currentYear = new Date().getFullYear();
-
-  const duree = currentYear - parseInt(anneeDebut);
-
-  if (duree < 0) return '--';
-
-  return ((parseFloat(nbCig) / 20) * duree).toFixed(1);
-
-}
-
-
-
-function getParaTagStyle(tagValue) {
-
-  return PARA_TAGS_LIST.find((t) => t.value === tagValue) || PARA_TAGS_LIST[0];
-
-}
-
-
+let currentUserEmail = localStorage.getItem(AUTH_USER_KEY) || null;
+let loginEmailPrefill = '';
 
 function saveToStorage() { storage.set('med_dashboard_data_v2', patients); }
 
+function getCurrentUserEmail() { return localStorage.getItem(AUTH_USER_KEY) || null; }
 
-
-function showReminderPopup(patientName, taskText, dueTime) {
-
-  const old = document.getElementById('reminder-popup');
-
-  if (old) old.remove();
-
-  const popup = document.createElement('div');
-
-  popup.id = 'reminder-popup';
-
-  popup.style.cssText = `position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; min-width: 300px; max-width: 90vw; background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); border-left: 5px solid #f59e0b; padding: 16px 20px; animation: slideDown 0.35s cubic-bezier(0.16,1,0.3,1);`;
-
-  popup.innerHTML = `
-
-    <style>
-
-      @keyframes slideDown { from { opacity:0; transform: translateX(-50%) translateY(-20px); } to { opacity:1; transform: translateX(-50%) translateY(0); } }
-
-    </style>
-
-    <div style="display:flex;align-items:flex-start;gap:12px;">
-
-      <div style="font-size:22px;flex-shrink:0;">🔔</div>
-
-      <div style="flex:1;">
-
-        <div style="font-size:11px;font-weight:900;text-transform:uppercase;color:#b45309;letter-spacing:0.5px;margin-bottom:2px;">Rappel — dans 30 minutes</div>
-
-        <div style="font-size:13px;font-weight:700;color:#1f2937;margin-bottom:2px;">${taskText || 'Tâche sans titre'}</div>
-
-        <div style="font-size:10px;color:#6b7280;">Patient : <b>${patientName}</b> · Échéance : <b>${dueTime}</b></div>
-
-      </div>
-
-      <button onclick="document.getElementById('reminder-popup').remove()" style="font-size:18px;color:#9ca3af;background:none;border:none;cursor:pointer;padding:0;line-height:1;flex-shrink:0;">&times;</button>
-
-    </div>`;
-
-  document.body.appendChild(popup);
-
-  setTimeout(() => { if (popup.parentNode) popup.remove(); }, 15000);
-
+function setCurrentUser(email) {
+  currentUserEmail = email;
+  localStorage.setItem(AUTH_USER_KEY, email);
+  saveToken(`${email}:${Date.now()}`);
 }
 
-
-
-function handleSmartBullet(e) {
-
-  if (e.key === 'Enter') {
-
-    const textarea = e.target;
-
-    const start = textarea.selectionStart;
-
-    const text = textarea.value;
-
-    const lastNewLine = text.lastIndexOf('\n', start - 1);
-
-    const currentLine = text.substring(lastNewLine + 1, start);
-
-    if (currentLine.trim().startsWith('-')) {
-
-      e.preventDefault();
-
-      const bullet = '\n- ';
-
-      textarea.value = text.substring(0, start) + bullet + text.substring(textarea.selectionEnd);
-
-      textarea.selectionStart = textarea.selectionEnd = start + bullet.length;
-
-    }
-
-  }
-
+function clearCurrentUser() {
+  currentUserEmail = null;
+  localStorage.removeItem(AUTH_USER_KEY);
+  clearToken();
 }
 
-
-
-function formatDateDisplay(dateStr) {
-
-  if (!dateStr) return '';
-
-  const [y, m, d] = dateStr.split('-');
-
-  return `${d}/${m}/${y.substring(2)}`;
-
+function getStoredAccounts() {
+  return storage.get('ashboard_accounts', {});
 }
 
-
-
-function showListView() {
-
-  document.getElementById('listView').classList.remove('hidden');
-
-  document.getElementById('detailView').classList.add('hidden');
-
-  document.getElementById('backBtn').classList.add('hidden');
-
-  renderList();
-
+function saveLocalAccount(email, password) {
+  const accounts = getStoredAccounts();
+  accounts[email.toLowerCase()] = password;
+  storage.set('ashboard_accounts', accounts);
 }
 
-
-
-function showDetailView(id) {
-
-  currentPatientId = id;
-
-  activeTabId = 'tab-identity';
-
-  document.getElementById('listView').classList.add('hidden');
-
-  document.getElementById('detailView').classList.remove('hidden');
-
-  document.getElementById('backBtn').classList.remove('hidden');
-
-  renderDetail();
-
+function validateLocalAccount(email, password) {
+  const accounts = getStoredAccounts();
+  return accounts[email.toLowerCase()] === password;
 }
 
-
-
-function createNewPatient() {
-
-  const newId = Date.now();
-
-  const newPatient = {
-
-    id: newId,
-
-    room: 'Ch. ?',
-
-    bed: 'Lit ?',
-
-    tag: 'Hospitalisé',
-
-    clinicalPriority: 3,
-
-    assignedTo: '',
-
-    identity: { name: '', sex: 'M', age: '' },
-
-    history: {
-
-      medical: '',
-
-      surgical: '',
-
-      allergic: '',
-
-      gpa: { g: 0, p: 0, a: 0, living: 0 },
-
-      gynecologic: '',
-
-      tabac: { nbCig: '', anneeDebut: '' },
-
-      alcool: '',
-
-      drogues: '',
-
-    },
-
-    admission: { date: new Date().toISOString().split('T')[0], reason: '', histoireMaladie: '' },
-
-    diagnostics: '',
-
-    diagnosticsDiff: ['', '', ''],
-
-    diagnosticsDiffPrecision: [null, null, null],
-
-    treatments: [],
-
-    paraclinics: [],
-
-    tasks: [],
-
-    evolution: [{
-
-      date: new Date().toISOString().split('T')[0],
-
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-
-      vitals: [],
-
-      functional: '',
-
-      signesPhysiques: { general: '', neuro: '', cardio: '', pneumo: '', digestif: '', autre: '' },
-
-      exam: {},
-
-      complications: '',
-
-      conclusion: '',
-
-      cat: '',
-
-    }],
-
-  };
-
-  patients.push(newPatient);
-
-  saveToStorage();
-
-  showDetailView(newId);
-
+function calcPA(nbCig, anneeDebut) {
+  const n = parseFloat(nbCig);
+  const y = parseInt(anneeDebut, 10);
+  if (!Number.isFinite(n) || !Number.isFinite(y) || y <= 0) return '';
+  const years = new Date().getFullYear() - y;
+  if (years <= 0) return '';
+  const pa = (n / 20) * years;
+  return Math.round(pa);
 }
 
-
-
-function getJn(admissionDate, targetDate) {
-
-  const d1 = new Date(admissionDate);
-
-  const d2 = new Date(targetDate);
-
-  d1.setHours(0, 0, 0, 0);
-
-  d2.setHours(0, 0, 0, 0);
-
-  return `J${Math.floor((d2 - d1) / 86400000)}`;
-
-}
-
-
-
-function openModal(idx, key, subKey = null) {
-
+function openModal(evIdx, fieldKey) {
   const p = patients.find((x) => x.id === currentPatientId);
-
-  currentModalCtx = { idx, key, subKey };
-
-  const content = subKey ? (p.evolution[idx].exam[subKey] || '') : (p.evolution[idx][key] || '');
-
-  document.getElementById('modalTitle').innerText = subKey || key;
-
-  document.getElementById('modalTextarea').value = content;
-
-  document.getElementById('modalExpand').style.display = 'flex';
-
+  if (!p || !p.evolution || !p.evolution[evIdx]) return;
+  
+  const ev = p.evolution[evIdx];
+  const value = ev[fieldKey] || '';
+  
+  // Store context
+  currentModalCtx = { idx: evIdx, key: fieldKey, subKey: null };
+  modalViewMode = 'edit';
+  
+  // Update modal title
+  const titleMap = {
+    functional: 'Signes Fonctionnels',
+    cat: 'Conclusion & CAT',
+  };
+  document.getElementById('modalTitle').textContent = titleMap[fieldKey] || 'Édition';
+  
+  // Set textarea value
+  const textarea = document.getElementById('modalTextarea');
+  textarea.value = value;
+  textarea.classList.remove('hidden');
+  
+  // Set preview
+  const preview = document.getElementById('modalPreview');
+  preview.textContent = value;
+  preview.classList.add('hidden');
+  
+  // Update button styles
   setModalMode('edit');
-
+  
+  // Show modal
+  document.getElementById('modalExpand').classList.add('open');
 }
-
-
-
-function setModalMode(mode) {
-
-  modalViewMode = mode;
-
-  const txt = document.getElementById('modalTextarea');
-
-  const pre = document.getElementById('modalPreview');
-
-  if (mode === 'edit') { txt.classList.remove('hidden'); pre.classList.add('hidden'); txt.focus(); }
-
-  else { txt.classList.add('hidden'); pre.classList.remove('hidden'); pre.innerText = txt.value || 'Champ vide'; }
-
-}
-
-
 
 function closeModal() {
-
-  const val = document.getElementById('modalTextarea').value;
-
-  const { idx, key, subKey } = currentModalCtx;
-
-  if (subKey) updateExam(idx, subKey, val);
-
-  else updateEv(idx, key, val);
-
-  document.getElementById('modalExpand').style.display = 'none';
-
-  renderDetail();
-
+  const p = patients.find((x) => x.id === currentPatientId);
+  if (!p) return;
+  
+  // Save changes
+  if (currentModalCtx.idx !== null && currentModalCtx.key) {
+    const textarea = document.getElementById('modalTextarea');
+    if (p.evolution && p.evolution[currentModalCtx.idx]) {
+      p.evolution[currentModalCtx.idx][currentModalCtx.key] = textarea.value;
+      saveToStorage();
+      renderDetail();
+    }
+  }
+  
+  // Reset context
+  currentModalCtx = { idx: null, key: null, subKey: null };
+  
+  // Hide modal
+  document.getElementById('modalExpand').classList.remove('open');
 }
 
-
-
-const SP_SYSTEMS = [
-
-  { key: 'general', label: 'Général', icon: 'fa-person', color: 'text-gray-600' },
-
-  { key: 'neuro', label: 'Neurologique', icon: 'fa-brain', color: 'text-purple-500' },
-
-  { key: 'cardio', label: 'Cardiovasculaire', icon: 'fa-heart-pulse', color: 'text-red-500' },
-
-  { key: 'pneumo', label: 'Pulmonaire / Respiratoire', icon: 'fa-lungs', color: 'text-blue-500' },
-
-  { key: 'digestif', label: 'Digestif / Abdominal', icon: 'fa-stomach', color: 'text-green-600' },
-
-  { key: 'uro', label: 'Urologique / Rénal', icon: 'fa-kidneys', color: 'text-cyan-600' },
-
-  { key: 'gyneco', label: 'Gynécologique', icon: 'fa-venus', color: 'text-pink-500' },
-
-  { key: 'obstetrique', label: 'Obstétrical', icon: 'fa-baby', color: 'text-pink-400' },
-
-  { key: 'ophthalmo', label: 'Ophtalmologique', icon: 'fa-eye', color: 'text-indigo-500' },
-
-  { key: 'orl', label: 'ORL', icon: 'fa-ear-listen', color: 'text-amber-600' },
-
-  { key: 'locomoteur', label: 'Locomoteur / Ostéo-articulaire', icon: 'fa-bone', color: 'text-orange-500' },
-
-  { key: 'tegumentaire', label: 'Tégumentaire / Dermatologie', icon: 'fa-hand-dots', color: 'text-yellow-600' },
-
-  { key: 'endocrino', label: 'Endocrinien / Métabolique', icon: 'fa-vial', color: 'text-teal-600' },
-
-  { key: 'hemato', label: 'Hématologique / Ganglions', icon: 'fa-droplet', color: 'text-rose-500' },
-
-  { key: 'autre', label: 'Autre / Remarques', icon: 'fa-notes-medical', color: 'text-gray-400' },
-
-];
-
-
+function setModalMode(mode) {
+  modalViewMode = mode;
+  const textarea = document.getElementById('modalTextarea');
+  const preview = document.getElementById('modalPreview');
+  const btnEdit = document.getElementById('btnEditMode');
+  const btnRead = document.getElementById('btnViewMode');
+  
+  if (mode === 'edit') {
+    textarea.classList.remove('hidden');
+    preview.classList.add('hidden');
+    
+    btnEdit.classList.add('bg-white', 'shadow-sm', 'text-gray-800');
+    btnEdit.classList.remove('text-gray-500');
+    btnRead.classList.remove('bg-white', 'shadow-sm', 'text-gray-800');
+    btnRead.classList.add('text-gray-500');
+  } else {
+    textarea.classList.add('hidden');
+    preview.classList.remove('hidden');
+    preview.textContent = textarea.value;
+    
+    btnRead.classList.add('bg-white', 'shadow-sm', 'text-gray-800');
+    btnRead.classList.remove('text-gray-500');
+    btnEdit.classList.remove('bg-white', 'shadow-sm', 'text-gray-800');
+    btnEdit.classList.add('text-gray-500');
+  }
+}
 
 function openSpModal(evIdx) {
 
@@ -766,7 +365,269 @@ function renderList() {
 
 }
 
+function showListView() {
+  currentView = 'dashboard';
+  renderCurrentView();
+}
 
+function showDetailView(id) {
+  currentView = 'detail';
+  currentPatientId = id;
+  renderCurrentView();
+  renderDetail();
+}
+
+function toggleMenu() {
+  const menu = document.getElementById('mainMenu');
+  const hamburger = document.querySelector('.hamburger-icon');
+  if (!menu) return;
+  
+  const isVisible = menu.style.opacity === '1';
+  
+  if (isVisible) {
+    menu.style.opacity = '0';
+    menu.style.pointerEvents = 'none';
+  } else {
+    menu.style.opacity = '1';
+    menu.style.pointerEvents = 'auto';
+  }
+  
+  if (hamburger) {
+    hamburger.classList.toggle('active');
+  }
+}
+
+function openPage(page) {
+  console.log('[openPage] Called with page:', page);
+  if (!isAuthenticated() && page !== 'login' && page !== 'register') {
+    page = 'login';
+  }
+  currentView = page;
+  console.log('[openPage] currentView updated to:', currentView);
+  renderCurrentView();
+  
+  const menu = document.getElementById('mainMenu');
+  const hamburger = document.querySelector('.hamburger-icon');
+  
+  if (menu && menu.style.opacity === '1') {
+    menu.style.opacity = '0';
+    menu.style.pointerEvents = 'none';
+    if (hamburger) {
+      hamburger.classList.remove('active');
+    }
+  }
+}
+
+function handleLoginSubmit() {
+  const emailInput = document.getElementById('loginEmail');
+  const passwordInput = document.getElementById('loginPassword');
+  const errorEl = document.getElementById('authError');
+  if (!emailInput || !passwordInput || !errorEl) return;
+
+  const email = emailInput.value.trim().toLowerCase();
+  const password = passwordInput.value;
+
+  if (!email || !password) {
+    errorEl.textContent = 'Veuillez fournir votre e-mail et votre mot de passe.';
+    return;
+  }
+
+  if (email === 'firstuser@gmail.com' && password === '1234') {
+    setCurrentUser(email);
+    currentView = 'dashboard';
+    loginEmailPrefill = '';
+    renderCurrentView();
+    return;
+  }
+
+  if (validateLocalAccount(email, password)) {
+    setCurrentUser(email);
+    currentView = 'dashboard';
+    loginEmailPrefill = '';
+    renderCurrentView();
+    return;
+  }
+
+  errorEl.textContent = 'Identifiant ou mot de passe incorrect.';
+}
+
+function handleRegisterSubmit() {
+  const emailInput = document.getElementById('registerEmail');
+  const passwordInput = document.getElementById('registerPassword');
+  const confirmInput = document.getElementById('registerConfirmPassword');
+  const errorEl = document.getElementById('authError');
+  if (!emailInput || !passwordInput || !confirmInput || !errorEl) return;
+
+  const email = emailInput.value.trim().toLowerCase();
+  const password = passwordInput.value;
+  const confirmPassword = confirmInput.value;
+
+  if (!email || !password || !confirmPassword) {
+    errorEl.textContent = 'Veuillez remplir tous les champs.';
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    errorEl.textContent = 'Les mots de passe ne correspondent pas.';
+    return;
+  }
+
+  const accounts = getStoredAccounts();
+  if (accounts[email]) {
+    errorEl.textContent = 'Ce compte existe déjà.';
+    return;
+  }
+
+  saveLocalAccount(email, password);
+  loginEmailPrefill = email;
+  currentView = 'login';
+  renderCurrentView();
+}
+
+function showLoginPage() {
+  loginEmailPrefill = loginEmailPrefill || '';
+  currentView = 'login';
+  renderCurrentView();
+}
+
+function showRegisterPage() {
+  currentView = 'register';
+  renderCurrentView();
+}
+
+function handleGoogleLogin() {
+  const errorEl = document.getElementById('authError');
+  if (!errorEl) return;
+  errorEl.textContent = 'Connexion Google disponible plus tard dans le backend.';
+}
+
+function handleLogout() {
+  clearCurrentUser();
+  currentView = 'login';
+  renderCurrentView();
+}
+
+function handleBackButton() {
+  if (currentView === 'detail') {
+    showListView();
+  } else {
+    openPage('dashboard');
+  }
+}
+
+function renderCurrentView() {
+  console.log('[renderCurrentView] Starting, currentView:', currentView);
+  const list = document.getElementById('listView');
+  const detail = document.getElementById('detailView');
+  const pageView = document.getElementById('pageView');
+  const backBtn = document.getElementById('backBtn');
+  const appHeader = document.getElementById('appHeader');
+  const mainMenu = document.getElementById('mainMenu');
+  if (!list || !detail || !pageView || !backBtn || !appHeader || !mainMenu) {
+    console.error('[renderCurrentView] Missing DOM elements:', {
+      list: !!list,
+      detail: !!detail,
+      pageView: !!pageView,
+      backBtn: !!backBtn,
+      appHeader: !!appHeader,
+      mainMenu: !!mainMenu,
+    });
+    return;
+  }
+
+  list.classList.add('hidden');
+  detail.classList.add('hidden');
+  pageView.classList.add('hidden');
+  appHeader.classList.toggle('hidden', currentView === 'login' || currentView === 'register');
+  if (currentView === 'login' || currentView === 'register') {
+    mainMenu.style.opacity = '0';
+    mainMenu.style.pointerEvents = 'none';
+  }
+
+  if (!isAuthenticated() && currentView !== 'login' && currentView !== 'register') {
+    currentView = 'login';
+  }
+
+  if (currentView === 'dashboard') {
+    console.log('[renderCurrentView] Showing dashboard');
+    list.classList.remove('hidden');
+    backBtn.classList.add('hidden');
+    renderList();
+    return;
+  }
+
+  if (currentView === 'detail') {
+    console.log('[renderCurrentView] Showing detail');
+    detail.classList.remove('hidden');
+    backBtn.classList.remove('hidden');
+    backBtn.innerHTML = '<i class="fa-solid fa-arrow-left mr-1"></i> RETOUR';
+    return;
+  }
+
+  if (currentView === 'login') {
+    console.log('[renderCurrentView] Showing login page');
+    pageView.classList.remove('hidden');
+    backBtn.classList.add('hidden');
+    pageView.innerHTML = renderLoginPage(loginEmailPrefill || getCurrentUserEmail() || '');
+    return;
+  }
+
+  if (currentView === 'register') {
+    console.log('[renderCurrentView] Showing register page');
+    pageView.classList.remove('hidden');
+    backBtn.classList.add('hidden');
+    pageView.innerHTML = renderRegisterPage();
+    return;
+  }
+
+  console.log('[renderCurrentView] Showing page:', currentView);
+  pageView.classList.remove('hidden');
+  backBtn.classList.remove('hidden');
+  backBtn.innerHTML = '<i class="fa-solid fa-arrow-left mr-1"></i> RETOUR';
+  if (currentView === 'profile') {
+    console.log('[renderCurrentView] Rendering profile page');
+    pageView.innerHTML = renderProfilePage();
+  } else if (currentView === 'settings') {
+    console.log('[renderCurrentView] Rendering settings page');
+    pageView.innerHTML = renderSettingsPage();
+  } else {
+    console.log('[renderCurrentView] Rendering about page');
+    pageView.innerHTML = renderAboutPage();
+  }
+}
+
+function createNewPatient() {
+  const id = Date.now();
+  const today = new Date().toISOString().split('T')[0];
+  const newPatient = {
+    id,
+    room: '',
+    bed: '',
+    tag: 'Hospitalisé',
+    clinicalPriority: 3,
+    assignedTo: '',
+    identity: { name: '', sex: 'M', age: '' },
+    admission: { date: today, reason: '', histoireMaladie: '' },
+    history: {
+      medical: '',
+      allergic: '',
+      tabac: { nbCig: '', anneeDebut: '' },
+      alcool: '',
+      drogues: '',
+      gpa: { g: '', p: '', a: '', living: '' },
+    },
+    diagnostics: '',
+    diagnosticsDiff: ['', '', ''],
+    diagnosticsDiffPrecision: [null, null, null],
+    evolution: [],
+    treatments: [],
+    paraclinics: [],
+    tasks: [],
+  };
+  patients.push(newPatient);
+  saveToStorage();
+  showDetailView(id);
+}
 
 function switchTab(tabId) { activeTabId = tabId; renderDetail(); }
 
@@ -780,8 +641,9 @@ function addTask() {
 
   if (!p.tasks) p.tasks = [];
 
-  p.tasks.push({ id: Date.now(), text: '', date: new Date().toISOString().split('T')[0], time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), dueDate: '', dueTime: '', completed: false, reminded: false });
+  p.tasks.unshift({ id: Date.now(), text: '', date: new Date().toISOString().split('T')[0], time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), dueDate: '', dueTime: '', completed: false, reminded: false });
 
+  saveToStorage();
   renderDetail();
 
 }
@@ -814,51 +676,6 @@ function removeTask(taskId) {
 
   renderDetail();
 
-}
-
-
-
-function renderAdherence(t, trIdx) {
-
-  if (!t.startDate || !t.endDate) return '<div class="text-[9px] text-gray-400 mt-1 italic">Saisir les dates de début et de fin pour afficher l\'observance.</div>';
-
-  const start = new Date(t.startDate);
-
-  const end = new Date(t.endDate);
-
-  if (end < start) return '<div class="text-[9px] text-red-400 mt-1 italic">Date de fin incohérente.</div>';
-
-  const stopDate = t.stoppedDate ? new Date(t.stoppedDate) : null;
-
-  let html = '<div class="adherence-row mt-2 no-scrollbar">';
-
-  let curr = new Date(start);
-
-  let safety = 0;
-
-  while (curr <= end && safety < 100) {
-
-    const dateStr = curr.toISOString().split('T')[0];
-
-    const displayDate = String(curr.getDate()).padStart(2, '0') + '/' + String(curr.getMonth() + 1).padStart(2, '0');
-
-    const isTaken = t.adherence && t.adherence.includes(dateStr);
-
-    const isAfterStop = t.stopped && stopDate && curr >= stopDate;
-
-    if (isAfterStop) html += `<div class="date-bubble bg-gray-100 text-gray-300 border-gray-200 cursor-not-allowed" title="Arrêté le ${formatDateDisplay(t.stoppedDate)}">${displayDate}</div>`;
-
-    else html += `<div onclick="toggleAdherence(${trIdx}, '${dateStr}')" class="date-bubble ${isTaken ? 'taken' : 'text-gray-500 hover:bg-gray-50'}">${displayDate}</div>`;
-
-    curr.setDate(curr.getDate() + 1);
-
-    safety++;
-
-  }
-
-  html += '</div>';
-
-  return html;
 
 }
 
@@ -1082,6 +899,8 @@ function processImportedPatient(importedData) {
 
 function sharePatient(id) { openShareModal(id); }
 
+function openShareCurrentPatient() { openShareModal(currentPatientId); }
+
 function importPatient() { openImportModal(); }
 
 
@@ -1164,73 +983,8 @@ function updateTabac(key, val) {
 
 
 
-function renderParaSortBar(category) {
-
-  const stateKey = category === 'bio' ? 'paraSortOrderBio' : 'paraSortOrderOther';
-
-  const filterKey = category === 'bio' ? 'paraFilterTagBio' : 'paraFilterTagOther';
-
-  const sortOrder = window[stateKey] || 'recent';
-
-  const filterTag = window[filterKey] || 'all';
-
-  const tagOptions = `<option value="all">Tous les tags</option>` + PARA_TAGS_LIST.filter((t) => t.value !== '').map((t) => `<option value="${t.value}" ${filterTag === t.value ? 'selected' : ''}>${t.label}</option>`).join('');
-
-  return `<div class="flex items-center gap-2 flex-wrap"><div class="flex bg-gray-100 p-0.5 rounded-lg text-[9px] font-bold"><button onclick="setParaSort('${category}', 'recent')" class="px-2 py-1 rounded-md transition ${sortOrder === 'recent' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-400'}"><i class="fa-solid fa-arrow-down-wide-short mr-1"></i>Récents</button><button onclick="setParaSort('${category}', 'oldest')" class="px-2 py-1 rounded-md transition ${sortOrder === 'oldest' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-400'}"><i class="fa-solid fa-arrow-up-wide-short mr-1"></i>Anciens</button></div><select onchange="setParaFilter('${category}', this.value)" class="para-tag-select text-[9px]" style="font-size:9px;">${tagOptions}</select></div>`;
-
-}
 
 
-
-function renderParaList(list, category, patientObj) {
-
-  const sortKey = category === 'bio' ? 'paraSortOrderBio' : 'paraSortOrderOther';
-
-  const filterKey = category === 'bio' ? 'paraFilterTagBio' : 'paraFilterTagOther';
-
-  const sortOrder = window[sortKey] || 'recent';
-
-  const filterTag = window[filterKey] || 'all';
-
-  let indexed = list.map((pa, idx) => ({ pa, idx })).filter(({ pa }) => (category === 'bio' ? pa.isBio : !pa.isBio));
-
-  if (filterTag !== 'all') indexed = indexed.filter(({ pa }) => (pa.paraTag || '') === filterTag);
-
-  indexed.sort((a, b) => {
-
-    const dA = new Date(a.pa.date || '1970-01-01');
-
-    const dB = new Date(b.pa.date || '1970-01-01');
-
-    return sortOrder === 'recent' ? dB - dA : dA - dB;
-
-  });
-
-  if (!indexed.length) return `<div class="text-center text-gray-300 text-xs py-6">Aucun résultat${filterTag !== 'all' ? ' pour ce tag' : ''}.</div>`;
-
-  return indexed.map(({ pa, idx: realIdx }) => {
-
-    const status = checkBioStatus(pa.type, pa.val);
-
-    const bioRefHtml = pa.isBio ? renderBioRefBlock(pa.type, pa.val) : '';
-
-    const normType = normalizeBioName(pa.type);
-
-    const isClearanceRelated = normType.includes('creatinine') || normType.includes('uree');
-
-    const clearanceHint = isClearanceRelated && pa.val ? '<div class="text-[8px] text-violet-500 font-bold mt-1"><i class="fa-solid fa-kidneys mr-1"></i>→ Voir calcul de clairance ci-dessous</div>' : '';
-
-    const currentTag = pa.paraTag || '';
-
-    const tagStyle = getParaTagStyle(currentTag);
-
-    const tagSelectHtml = `<select onchange="updateParaTag(${realIdx}, this.value)" class="para-tag-select" style="font-size:9px; border-color: ${tagStyle.border};">${PARA_TAGS_LIST.map((t) => `<option value="${t.value}" ${currentTag === t.value ? 'selected' : ''}>${t.label || 'Sans tag'}</option>`).join('')}</select>`;
-
-    return `<div class="medical-card p-3 border-l-4 ${pa.isBio ? 'border-blue-100' : 'border-purple-100'}"><div class="flex justify-between items-center mb-2"><input type="text" value="${pa.type}" onchange="updatePa(${realIdx}, 'type', this.value); refreshBioRef(${realIdx});" class="font-bold text-xs border-none p-0 bg-transparent flex-1" placeholder="Ex: Kaliémie"><div class="flex items-center gap-2 ml-2 flex-shrink-0"><div class="text-[9px] text-gray-400">${formatDateDisplay(pa.date)}</div><input type="date" value="${pa.date || ''}" onchange="updatePa(${realIdx}, 'date', this.value); renderDetail();" class="text-[8px] border-gray-100 p-1 rounded w-28 hidden" id="para-date-input-${realIdx}"><button onclick="document.getElementById('para-date-input-${realIdx}').classList.toggle('hidden'); document.getElementById('para-date-input-${realIdx}').focus();" class="text-gray-300 hover:text-blue-400 text-xs"><i class="fa-solid fa-calendar-days"></i></button></div></div><div class="mb-2">${tagSelectHtml}</div>${pa.isBio ? `<div class="flex items-center gap-4"><input type="text" id="bio-val-${realIdx}" value="${pa.val}" onchange="updatePa(${realIdx}, 'val', this.value); refreshBioRef(${realIdx});" oninput="liveRefresh(${realIdx}, this.value);" class="w-20 text-lg font-bold border-gray-50 ${status.color}" placeholder="0.0"><div><div class="text-[8px] font-bold text-gray-400 uppercase">${status.status !== 'unknown' ? `Réf: ${status.ref}` : 'Réf: Inconnue'}</div>${status.status === 'high' ? '<div class="text-[8px] text-red-500 font-black animate-pulse">⬆ ÉLEVÉ</div>' : ''}${status.status === 'low' ? '<div class="text-[8px] text-blue-500 font-black animate-pulse">⬇ BAS</div>' : ''}${status.status === 'normal' ? '<div class="text-[8px] text-green-500 font-bold">✓ NORMAL</div>' : ''}</div></div><div id="bio-ref-block-${realIdx}">${bioRefHtml}</div>${clearanceHint}` : `<textarea onkeydown="handleSmartBullet(event)" onchange="updatePa(${realIdx}, 'val', this.value)" class="text-xs w-full h-12 bg-gray-50 border-none p-2 rounded auto-resize">${pa.val}</textarea>`}<button onclick="removePa(${realIdx})" class="text-[8px] text-red-300 mt-2 block uppercase">Supprimer</button></div>`;
-
-  }).join('');
-
-}
 
 
 
@@ -1296,123 +1050,6 @@ function refreshBioRef(realIdx) {
 
 
 
-function renderVitals(evIdx, vitals) {
-
-  return vitals.map((v, vIdx) => {
-
-    const pamVal = Math.round(calculatePAM({ systolic: v.tasG, diastolic: v.tadG }));
-
-    const pamNum = parseInt(pamVal);
-
-    const cTemp = vitalClass('temp', v.temp);
-
-    const cFc = vitalClass('fc', v.fc);
-
-    const cFr = vitalClass('fr', v.fr);
-
-    const cTasG = vitalClass('tasG', v.tasG);
-
-    const cTadG = vitalClass('tadG', v.tadG);
-
-    const cTasD = vitalClass('tasD', v.tasD);
-
-    const cTadD = vitalClass('tadD', v.tadD);
-
-    const cPam = (!isNaN(pamNum) && (pamNum < 70 || pamNum > 105)) ? 'abnormal-flash' : '';
-
-    const cSpo2 = v.spo2Mode === 'o2' ? vitalClass('spo2_o2', v.spo2) : vitalClass('spo2_aa', v.spo2);
-
-    const cDiur = vitalClass('diurese', v.diurese);
-
-    return `
-
-      <div class="text-[10px] p-3 bg-white rounded-xl border border-gray-100 space-y-3 relative">
-
-        <div class="flex justify-between text-[8px] uppercase font-bold text-gray-300 border-b border-gray-50 pb-1 mb-1">
-
-          <span>Prise à : <input type="time" value="${v.time || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'time', this.value)" class="font-bold border-none p-0 text-xs text-blue-500 w-16 bg-transparent"></span>
-
-          <button onclick="removeVital(${evIdx}, ${vIdx})" class="text-red-400 font-bold">Retirer</button>
-
-        </div>
-
-        <div class="grid grid-cols-3 gap-2 bg-emerald-50/40 border border-emerald-100 rounded-lg p-2">
-
-          <div class="flex flex-col items-center"><span class="text-[8px] text-emerald-600 font-bold uppercase mb-1"><i class="fa-solid fa-weight-scale mr-0.5"></i>Poids</span><div class="flex items-center gap-1"><input type="number" step="0.1" min="0" value="${v.poids || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'poids', this.value); renderDetail();" class="font-black border-none p-0 text-sm text-center w-14 bg-transparent text-emerald-700" placeholder="70"><span class="text-[8px] text-gray-400">kg</span></div></div>
-
-          <div class="flex flex-col items-center"><span class="text-[8px] text-emerald-600 font-bold uppercase mb-1"><i class="fa-solid fa-ruler-vertical mr-0.5"></i>Taille</span><div class="flex items-center gap-1"><input type="number" step="1" min="0" value="${v.taille || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'taille', this.value); renderDetail();" class="font-black border-none p-0 text-sm text-center w-14 bg-transparent text-emerald-700" placeholder="170"><span class="text-[8px] text-gray-400">cm</span></div></div>
-
-          <div class="flex flex-col items-center justify-center"><span class="text-[8px] text-emerald-600 font-bold uppercase mb-1">IMC</span>${(() => {
-
-            const pds = parseFloat(v.poids);
-
-            const tll = parseFloat(v.taille);
-
-            if (!isNaN(pds) && !isNaN(tll) && pds > 0 && tll > 0) {
-
-              const imc = (pds / Math.pow(tll / 100, 2)).toFixed(1);
-
-              const imcNum = parseFloat(imc);
-
-              let imcLabel = ''; let imcColor = '';
-
-              if (imcNum < 16.5) { imcLabel = 'Dénutrition sévère'; imcColor = 'text-red-600'; }
-
-              else if (imcNum < 18.5) { imcLabel = 'Sous-poids'; imcColor = 'text-blue-500'; }
-
-              else if (imcNum < 25.0) { imcLabel = 'Normal'; imcColor = 'text-green-600'; }
-
-              else if (imcNum < 30.0) { imcLabel = 'Surpoids'; imcColor = 'text-amber-500'; }
-
-              else if (imcNum < 35.0) { imcLabel = 'Obésité I'; imcColor = 'text-orange-500'; }
-
-              else if (imcNum < 40.0) { imcLabel = 'Obésité II'; imcColor = 'text-red-500'; }
-
-              else { imcLabel = 'Obésité III'; imcColor = 'text-red-700'; }
-
-              return `<div class="font-black text-sm ${imcColor}">${imc}</div><div class="text-[7px] ${imcColor} font-bold">${imcLabel}</div>`;
-
-            }
-
-            return '<div class="text-gray-300 text-xs font-bold">—</div>';
-
-          })()}</div>
-
-        </div>
-
-        <div class="grid grid-cols-3 gap-2">
-
-          <div class="flex flex-col items-center bg-gray-50 rounded-lg p-2"><span class="text-[8px] text-gray-400 font-bold uppercase mb-1">T°C</span><input type="number" step="0.1" value="${v.temp || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'temp', this.value); renderDetail();" class="font-black border-none p-0 text-sm text-center w-16 bg-transparent ${cTemp}" placeholder="37.0"></div>
-
-          <div class="flex flex-col items-center bg-gray-50 rounded-lg p-2"><span class="text-[8px] text-gray-400 font-bold uppercase mb-1">FC <span class="text-gray-300 normal-case">bpm</span></span><input type="number" value="${v.fc || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'fc', this.value); renderDetail();" class="font-black border-none p-0 text-sm text-center w-16 bg-transparent ${cFc}" placeholder="80"></div>
-
-          <div class="flex flex-col items-center bg-gray-50 rounded-lg p-2"><span class="text-[8px] text-gray-400 font-bold uppercase mb-1">FR <span class="text-gray-300 normal-case">c/min</span></span><input type="number" value="${v.fr || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'fr', this.value); renderDetail();" class="font-black border-none p-0 text-sm text-center w-16 bg-transparent ${cFr}" placeholder="16"></div>
-
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-
-          <div class="bg-red-50/40 border border-red-100 rounded-lg p-2"><div class="text-[8px] text-red-400 font-bold uppercase mb-1 text-center">TA Gauche</div><div class="flex items-center justify-center gap-1"><div class="flex flex-col items-center"><span class="text-[7px] text-gray-400">TAS</span><input type="number" value="${v.tasG || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'tasG', this.value); renderDetail();" class="w-12 font-black border-none p-0 text-sm text-center bg-transparent ${cTasG}" placeholder="120"></div><span class="text-gray-400 font-bold text-sm">/</span><div class="flex flex-col items-center"><span class="text-[7px] text-gray-400">TAD</span><input type="number" value="${v.tadG || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'tadG', this.value); renderDetail();" class="w-12 font-black border-none p-0 text-sm text-center bg-transparent ${cTadG}" placeholder="80"></div></div></div>
-
-          <div class="bg-blue-50/40 border border-blue-100 rounded-lg p-2"><div class="text-[8px] text-blue-400 font-bold uppercase mb-1 text-center">TA Droite</div><div class="flex items-center justify-center gap-1"><div class="flex flex-col items-center"><span class="text-[7px] text-gray-400">TAS</span><input type="number" value="${v.tasD || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'tasD', this.value); renderDetail();" class="w-12 font-black border-none p-0 text-sm text-center bg-transparent ${cTasD}" placeholder="120"></div><span class="text-gray-400 font-bold text-sm">/</span><div class="flex flex-col items-center"><span class="text-[7px] text-gray-400">TAD</span><input type="number" value="${v.tadD || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'tadD', this.value); renderDetail();" class="w-12 font-black border-none p-0 text-sm text-center bg-transparent ${cTadD}" placeholder="80"></div></div></div>
-
-        </div>
-
-        <div class="flex items-center gap-2 bg-gray-900 text-white rounded-lg px-3 py-1.5"><span class="text-[8px] uppercase font-bold text-gray-400">PAM (calculé depuis TA G) :</span><span class="font-black text-sm ${cPam}">${pamVal} <span class="text-[8px] font-normal text-gray-400">mmHg</span></span>${!isNaN(pamNum) && pamNum < 65 ? '<span class="text-[8px] text-red-400 font-black animate-pulse">⚠️ CHOC</span>' : ''}</div>
-
-        <div class="grid grid-cols-2 gap-2">
-
-          <div class="bg-sky-50/50 border border-sky-100 rounded-lg p-2"><div class="text-[8px] text-sky-500 font-bold uppercase mb-1">SpO2 %</div><div class="flex items-center gap-1 mb-1"><select onchange="updateVit(${evIdx}, ${vIdx}, 'spo2Mode', this.value); renderDetail();" class="text-[8px] p-1 border-sky-100 rounded bg-white font-bold"><option value="aa" ${(!v.spo2Mode || v.spo2Mode === 'aa') ? 'selected' : ''}>Air ambiant</option><option value="o2" ${v.spo2Mode === 'o2' ? 'selected' : ''}>Sous O2</option></select></div><input type="number" min="0" max="100" step="0.1" value="${v.spo2 || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'spo2', this.value); renderDetail();" class="w-full font-black border-none p-0 text-sm text-center bg-transparent ${cSpo2}" placeholder="98">${v.spo2Mode === 'o2' ? `<div class="text-[7px] text-sky-400 text-center mt-0.5">Débit O2 : <input type="number" step="0.5" value="${v.debitO2 || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'debitO2', this.value)" class="w-8 border-none bg-transparent font-bold text-sky-500 p-0 text-[9px]"> L/min</div>` : ''}</div>
-
-          <div class="bg-yellow-50/50 border border-yellow-100 rounded-lg p-2 flex flex-col justify-between"><div class="text-[8px] text-yellow-600 font-bold uppercase mb-2"><i class="fa-solid fa-droplet mr-1"></i>Diurèse</div><div class="flex items-center justify-between gap-2 bg-white border border-yellow-100 rounded-md px-2 py-1.5"><input type="number" min="0" step="0.1" value="${v.diurese || ''}" onchange="updateVit(${evIdx}, ${vIdx}, 'diurese', this.value); renderDetail();" class="flex-1 font-black border-none p-0 text-base text-center bg-transparent ${cDiur}" style="min-width:0" placeholder="—"><span class="text-[9px] text-gray-400 font-semibold whitespace-nowrap">L / 24h</span></div><div class="text-[7px] text-center mt-1 ${cDiur ? 'text-red-400 font-bold' : 'text-gray-300'}">${cDiur ? '⚠️ Anormal' : 'Normale : 1–3 L/24h'}</div></div>
-
-        </div>
-
-      </div>`;
-
-  }).join('');
-
-}
 
 
 
@@ -1434,12 +1071,16 @@ function updateTr(idx, key, val) { patients.find((x) => x.id === currentPatientI
 
 function updatePa(idx, key, val) { patients.find((x) => x.id === currentPatientId).paraclinics[idx][key] = val; saveToStorage(); }
 
+function updateDiff(idx, val) { const p = patients.find((x) => x.id === currentPatientId); if (!p.diagnosticsDiff) p.diagnosticsDiff = ['', '', '']; p.diagnosticsDiff[idx] = val; saveToStorage(); }
+
 
 
 function addVitalEntry(evIdx) {
 
-  patients.find((x) => x.id === currentPatientId).evolution[evIdx].vitals.push({ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), temp: '', fc: '', fr: '', tasG: '', tadG: '', tasD: '', tadD: '', spo2: '', spo2Mode: 'aa', debitO2: '', diurese: '', poids: '', taille: '' });
+  const p = patients.find((x) => x.id === currentPatientId);
+  p.evolution[evIdx].vitals.push({ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), temp: '', fc: '', fr: '', tasG: '', tadG: '', tasD: '', tadD: '', spo2: '', spo2Mode: 'aa', debitO2: '', diurese: '', poids: '', taille: '' });
 
+  saveToStorage();
   renderDetail();
 
 }
@@ -1452,8 +1093,10 @@ function updateVit(evIdx, vIdx, key, val) { patients.find((x) => x.id === curren
 
 function addEvolution() {
 
-  patients.find((x) => x.id === currentPatientId).evolution.push({ date: new Date().toISOString().split('T')[0], time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), vitals: [], functional: '', signesPhysiques: { general: '', neuro: '', cardio: '', pneumo: '', digestif: '', autre: '' }, exam: {}, complications: '', conclusion: '', cat: '' });
+  const p = patients.find((x) => x.id === currentPatientId);
+  p.evolution.unshift({ date: new Date().toISOString().split('T')[0], time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), vitals: [], functional: '', signesPhysiques: { general: '', neuro: '', cardio: '', pneumo: '', digestif: '', autre: '' }, exam: {}, complications: '', conclusion: '', cat: '' });
 
+  saveToStorage();
   renderDetail();
 
 }
@@ -1462,15 +1105,17 @@ function addEvolution() {
 
 function addTreatment() {
 
-  patients.find((x) => x.id === currentPatientId).treatments.push({ name: '', dosage: '', form: '', stopped: false, stoppedDate: null, startDate: new Date().toISOString().split('T')[0], endDate: '', adherence: [] });
+  const p = patients.find((x) => x.id === currentPatientId);
+  p.treatments.unshift({ name: '', dosage: '', form: '', stopped: false, stoppedDate: null, startDate: new Date().toISOString().split('T')[0], endDate: '', adherence: [] });
 
+  saveToStorage();
   renderDetail();
 
 }
 
 
 
-function addPara(cat) { patients.find((x) => x.id === currentPatientId).paraclinics.push({ type: '', val: '', date: new Date().toISOString().split('T')[0], isBio: cat === 'bio', paraTag: '' }); renderDetail(); }
+function addPara(cat) { const p = patients.find((x) => x.id === currentPatientId); p.paraclinics.unshift({ type: '', val: '', date: new Date().toISOString().split('T')[0], isBio: cat === 'bio', paraTag: '' }); saveToStorage(); renderDetail(); }
 
 function removeTr(idx) { patients.find((x) => x.id === currentPatientId).treatments.splice(idx, 1); saveToStorage(); renderDetail(); }
 
@@ -1480,7 +1125,7 @@ function removeEv(idx) { if (confirm('Supprimer ?')) { patients.find((x) => x.id
 
 function removePa(idx) { patients.find((x) => x.id === currentPatientId).paraclinics.splice(idx, 1); saveToStorage(); renderDetail(); }
 
-function saveCurrentPatient() { saveToStorage(); showListView(); }
+function saveCurrentPatient() { saveToStorage(); }
 
 function deleteCurrentPatient() { if (confirm('Supprimer le dossier ?')) { patients = patients.filter((x) => x.id !== currentPatientId); saveToStorage(); showListView(); } }
 
@@ -1706,7 +1351,7 @@ function renderApp() {
 
   app.innerHTML = `
 
-    <header class="bg-white border-b border-gray-100 p-4 top-0 z-50 transition-colors">
+    <header id="appHeader" class="bg-white border-b border-gray-100 p-4 top-0 z-50 transition-colors">
 
       <div class="max-w-4xl mx-auto flex justify-between items-center">
 
@@ -1721,9 +1366,14 @@ function renderApp() {
         <div class="flex items-center gap-3 sm:gap-6">
 
           <button onclick="toggleDarkMode()" class="text-gray-400 hover:text-blue-500 transition" title="Mode Sombre"><i id="themeIcon" class="fa-solid fa-moon text-xl"></i></button>
-
-          <button onclick="showListView()" id="backBtn" class="hidden text-sm text-gray-500 hover:text-black transition font-bold"><i class="fa-solid fa-arrow-left mr-1"></i> RETOUR</button>
-
+          <button onclick="handleBackButton()" id="backBtn" class="hidden text-sm text-gray-500 hover:text-black transition font-bold"><i class="fa-solid fa-arrow-left mr-1"></i> RETOUR</button>
+          <button onclick="toggleMenu()" id="menuButton" class="relative w-10 h-10 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-100" title="Menu">
+            <span class="hamburger-icon">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+          </button>
         </div>
 
       </div>
@@ -1732,31 +1382,81 @@ function renderApp() {
 
 
 
-    <main class="p-4 max-w-4xl mx-auto min-h-screen">
+    <div id="mainMenu" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" style="opacity: 0; pointer-events: none; transition: opacity 0.3s ease;">
+      <!-- Backdrop Overlay (MUST be before menu-sidebar for proper z-order) -->
+      <button onclick="toggleMenu()" class="absolute inset-0 bg-transparent cursor-default"></button>
 
-      <div id="listView">
-
-        <div id="statsContainer" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
-
-          <div class="medical-card p-3 bg-blue-50/50"><div class="text-[9px] font-black uppercase text-blue-400 tracking-tighter">Total Dossiers</div><div id="statTotal" class="text-2xl font-bold text-blue-600">0</div></div>
-
-          <div class="medical-card p-3 border-red-100"><div class="text-[9px] font-black uppercase text-red-400 tracking-tighter">Critiques</div><div id="statCritique" class="text-2xl font-bold text-red-600">0</div></div>
-
-          <div class="medical-card p-2 text-[10px] space-y-1"><div id="statTags" class="flex flex-col gap-1"></div></div>
-
-          <div class="medical-card p-2 text-[10px] flex flex-col justify-center"><div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-orange-400"></span> À surveiller : <b id="statWatch">0</b></div><div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-green-500"></span> Stable : <b id="statStable">0</b></div></div>
-
+      <div class="absolute left-0 top-0 h-full w-[280px] bg-white menu-sidebar" style="box-shadow: 0 0 0 transparent; transition: box-shadow 0.3s ease;">
+        <!-- Menu Header -->
+        <div class="menu-header py-6 px-4 border-b border-gray-100">
+          <div class="flex items-center justify-between">
+            <div class="flex-1">
+              <div class="text-xs font-bold uppercase tracking-[0.24em] text-gray-400 mb-1">Navigation</div>
+              <h2 class="text-lg font-bold text-gray-900">Menu</h2>
+            </div>
+            <button onclick="toggleMenu()" class="ml-4 p-2 rounded-lg text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors">
+              <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+          </div>
         </div>
 
-        <div class="flex flex-col md:flex-row gap-3 mb-3"><div class="relative flex-1"><i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i><input type="text" id="searchInput" placeholder="Rechercher un nom, chambre, diagnostic..." class="w-full pl-10 pr-4 py-3 text-base rounded-xl shadow-sm border-gray-200"></div><div class="relative flex-0.5"><select id="sortCriteria" class="text-xs font-bold flex-1 md:w-40"><option value="priority">Trier par : Statut</option><option value="date">Trier par : Date d'admission</option><option value="name">Trier par : Nom</option></select></div></div>
+        <!-- Menu Navigation -->
+        <nav class="menu-nav py-6 px-2 space-y-2">
+  <button data-page="dashboard" class="menu-link w-full text-left p-3 rounded-2xl flex items-center gap-4 group hover:bg-white hover:shadow-sm border border-transparent hover:border-gray-100 transition-all active:scale-[0.98]">
+    <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center group-hover:shadow-inner transition-all border border-blue-50/50">
+      <i class="fa-solid fa-hospital-user text-blue-600 text-lg group-hover:scale-110 transition-transform"></i>
+    </div>
+    <div class="flex-1">
+      <span class="block text-sm font-black text-gray-800 tracking-tight">Tableau de bord</span>
+      <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Gérer les patients</span>
+    </div>
+    <i class="fa-solid fa-chevron-right text-gray-300 text-xs opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all"></i>
+  </button>
 
-        <div class="medical-card p-3 mb-6 flex flex-wrap gap-2 items-center"><button onclick="createNewPatient()" class="flex-1 min-w-[120px] bg-black text-white px-4 py-2.5 rounded-xl shadow-sm text-sm font-semibold hover:opacity-80 transition flex items-center justify-center gap-2"><i class="fa-solid fa-plus"></i>Nouveau</button><button onclick="openImportModal()" class="flex-1 min-w-[120px] bg-gray-100 text-gray-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200 transition flex items-center justify-center gap-2"><i class="fa-solid fa-file-import"></i>Importer</button></div>
+  <button data-page="profile" class="menu-link w-full text-left p-3 rounded-2xl flex items-center gap-4 group hover:bg-white hover:shadow-sm border border-transparent hover:border-gray-100 transition-all active:scale-[0.98]">
+    <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-teal-50 to-teal-100 flex items-center justify-center group-hover:shadow-inner transition-all border border-teal-50/50">
+      <i class="fa-solid fa-user-doctor text-teal-600 text-lg group-hover:scale-110 transition-transform"></i>
+    </div>
+    <div class="flex-1">
+      <span class="block text-sm font-black text-gray-800 tracking-tight">Mon profil</span>
+      <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Statistiques & Ego</span>
+    </div>
+    <i class="fa-solid fa-chevron-right text-gray-300 text-xs opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all"></i>
+  </button>
 
-        <div id="patientList" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+  <button data-page="settings" class="menu-link w-full text-left p-3 rounded-2xl flex items-center gap-4 group hover:bg-white hover:shadow-sm border border-transparent hover:border-gray-100 transition-all active:scale-[0.98]">
+    <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-50 to-amber-100 flex items-center justify-center group-hover:shadow-inner transition-all border border-amber-50/50">
+      <i class="fa-solid fa-gears text-amber-600 text-lg group-hover:rotate-90 transition-transform duration-500"></i>
+    </div>
+    <div class="flex-1">
+      <span class="block text-sm font-black text-gray-800 tracking-tight">Paramètres</span>
+      <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Configuration système</span>
+    </div>
+    <i class="fa-solid fa-chevron-right text-gray-300 text-xs opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all"></i>
+  </button>
 
+  <button data-page="about" class="menu-link w-full text-left p-3 rounded-2xl flex items-center gap-4 group hover:bg-white hover:shadow-sm border border-transparent hover:border-gray-100 transition-all active:scale-[0.98]">
+    <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 flex items-center justify-center group-hover:shadow-inner transition-all border border-purple-50/50">
+      <i class="fa-solid fa-staff-snake text-purple-600 text-lg group-hover:scale-110 transition-transform"></i>
+    </div>
+    <div class="flex-1">
+      <span class="block text-sm font-black text-gray-800 tracking-tight">À propos</span>
+      <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Mentions légales</span>
+    </div>
+    <i class="fa-solid fa-chevron-right text-gray-300 text-xs opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all"></i>
+  </button>
+</nav>
+
+        <!-- Menu Footer -->
+        <div class="absolute bottom-0 left-0 right-0 border-t border-gray-100 bg-gray-50 p-4">
+          <p class="text-[10px] text-gray-500 text-center uppercase tracking-[0.16em]">© 2026 Ash-board</p>
+        </div>
       </div>
+    </div>
 
+    <main class="p-4 max-w-4xl mx-auto min-h-screen">
 
+      ${renderDashboardPage()}
 
       <div id="detailView" class="hidden">
 
@@ -1782,7 +1482,7 @@ function renderApp() {
 
           <button onclick="saveCurrentPatient()" class="flex-1 bg-gray-900 text-white py-3 rounded-xl font-medium shadow-sm hover:bg-black transition"><i class="fa-solid fa-floppy-disk mr-2"></i>Enregistrer</button>
 
-          <button onclick="openShareModal(currentPatientId)" class="bg-blue-50 text-blue-600 px-4 py-3 rounded-xl hover:bg-blue-100 transition" title="Partager / Télécharger"><i class="fa-solid fa-share-nodes"></i></button>
+          <button onclick="openShareCurrentPatient()" class="bg-blue-50 text-blue-600 px-4 py-3 rounded-xl hover:bg-blue-100 transition" title="Partager / Télécharger"><i class="fa-solid fa-share-nodes"></i></button>
 
           <button onclick="deleteCurrentPatient()" class="bg-white border border-red-100 text-red-500 px-4 py-3 rounded-xl hover:bg-red-50 transition"><i class="fa-solid fa-trash"></i></button>
 
@@ -1790,11 +1490,24 @@ function renderApp() {
 
       </div>
 
+      <div id="pageView" class="hidden"></div>
+
     </main>
 
 
 
-    <footer class="text-center py-8 text-gray-400 text-[10px] uppercase tracking-widest border-t border-gray-50 mt-10">App créée par RAHARIMANANTSOA Herivola-Copyright©-2026</footer>
+
+   <footer class="text-center py-10 border-t border-gray-100 mt-12 space-y-2">
+  <div class="flex items-center justify-center gap-2">
+    <span class="w-6 h-[1px] bg-gray-200"></span>
+    <i class="fa-solid fa-terminal text-gray-300 text-[10px]"></i>
+    <span class="w-6 h-[1px] bg-gray-200"></span>
+  </div>
+  <p class="text-[9px] font-black uppercase tracking-[0.25em] text-gray-400">
+    &copy; 2026 &bull; Propulsé par <span class="text-gray-700 font-black tracking-tight hover:text-teal-500 transition-colors cursor-pointer">Ash-Code</span>
+  </p>
+ 
+</footer>
 
 
 
@@ -1986,7 +1699,9 @@ function renderApp() {
 
   document.getElementById('sortCriteria').addEventListener('change', renderList);
 
-  renderList();
+  renderCurrentView();
+
+  attachMenuHandlers();
 
   if (storage.get('theme') === 'dark') {
 
@@ -2044,18 +1759,49 @@ setInterval(() => {
 
 
 
+function attachMenuHandlers() {
+  const mainMenu = document.getElementById('mainMenu');
+  console.log('[attachMenuHandlers] mainMenu element found:', !!mainMenu);
+  if (!mainMenu) {
+    console.error('[attachMenuHandlers] mainMenu element NOT found!');
+    return;
+  }
+
+  mainMenu.addEventListener('click', (event) => {
+    console.log('[menu click event]', event.target.tagName, event.target.getAttribute('data-page'));
+    
+    const pageButton = event.target.closest('[data-page]');
+    if (pageButton) {
+      const page = pageButton.dataset.page;
+      console.log('[menu] Page button clicked:', page);
+      if (page) {
+        console.log('[menu] Calling openPage with:', page);
+        openPage(page);
+      }
+      return;
+    }
+
+    const actionButton = event.target.closest('[data-action="toggle-menu"]');
+    if (actionButton) {
+      toggleMenu();
+    }
+  });
+  console.log('[attachMenuHandlers] Event listener attached successfully');
+}
+
 function initializeApp() {
 
   renderApp();
+  attachMenuHandlers();
+
+  currentView = isAuthenticated() ? 'dashboard' : 'login';
 
   if (patients.length) {
-
     currentPatientId = patients[0].id;
-
     renderDetail();
-
   }
 
+  renderCurrentView();
 }
 
 
@@ -2063,6 +1809,12 @@ function initializeApp() {
 Object.assign(window, {
 
   toggleDarkMode,
+
+  toggleMenu,
+
+  openPage,
+
+  handleBackButton,
 
   showListView,
 
@@ -2085,6 +1837,15 @@ Object.assign(window, {
   importFromPaste,
 
   sharePatient,
+
+  openShareCurrentPatient,
+
+  handleLoginSubmit,
+  handleRegisterSubmit,
+  showLoginPage,
+  showRegisterPage,
+  handleGoogleLogin,
+  handleLogout,
 
   openShareModal,
 

@@ -1,8 +1,8 @@
 export const views = {
   list: 'list-view',
-  detail: 'detail-view',
-  profile: 'profile-view',
-  settings: 'settings-view',
+  detail: 'detail-page',
+  profile: 'profile-page',
+  settings: 'settings-page',
 };
 
 export function navigateTo(viewName, payload = {}) {
