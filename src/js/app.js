@@ -27,6 +27,21 @@ const PARA_TAGS_LIST = [
   { value: 'a-controler', label: '🔁 À contrôler', color: 'bg-blue-100 text-blue-700', border: '#93c5fd' },
 ];
 
+const SP_SYSTEMS = [
+  {key: 'general', label: 'Général', color: 'text-gray-500', icon: 'fa-hospital-user' },
+  { key: 'cardiovasculaire', label: 'Cardiovasculaire', color: 'text-red-500', icon: 'fa-heart' },
+  { key: 'respiratoire', label: 'Respiratoire', color: 'text-blue-500', icon: 'fa-lungs' },
+  { key: 'neurologique', label: 'Neurologique', color: 'text-purple-500', icon: 'fa-brain' },
+  { key: 'abdominal', label: 'Abdominal', color: 'text-orange-500', icon: 'fa-stomach' },
+  { key: 'orl', label: 'ORL', color: 'text-pink-500', icon: 'fa-ear' },
+  {key:'ophtalmologique', label: 'Ophtalmologique', color: 'text-sky-500', icon: 'fa-eye' },
+  { key: 'peau', label: 'Peau', color: 'text-amber-500', icon: 'fa-hand-holding-medical' },
+  { key: 'locomoteur', label: 'Locomoteur', color: 'text-emerald-500', icon: 'fa-bone' },
+  {key:'urologique', label: 'Urologique', color: 'text-cyan-500', icon: 'fa-kidneys' },
+  {key:'gynécologique', label: 'Gynécologique', color: 'text-fuchsia-500', icon: 'fa-venus' },
+  {key:'autres', label: 'Autres', color: 'text-gray-400', icon: 'fa-asterisk' },
+];
+
 const TAGS = ['Hospitalisé', 'Décédé', 'Sorti', 'Décharge', 'Fuite', 'Au bloc'];
 const AUTH_USER_KEY = 'ashboard_user';
 
