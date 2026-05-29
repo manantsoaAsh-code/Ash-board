@@ -24,16 +24,6 @@ export function renderSettingsPage() {
       <div class="medical-card p-4 space-y-3">
         <h3 class="text-[9px] font-black uppercase text-blue-500 tracking-widest mb-2"><i class="fa-solid fa-user-doctor mr-1.5"></i>Clinique & Ashclépios</h3>
 
-        <div class="flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50 p-3">
-          <div class="pr-2">
-            <p class="font-bold text-xs text-gray-900">Niveau de détail de l'IA</p>
-            <p class="text-[9px] text-gray-500 leading-tight mt-0.5">Concis (pour survivre en garde) ou Détaillé (pour briller en staff).</p>
-          </div>
-          <select class="text-[10px] font-bold bg-white border border-gray-200 rounded-lg p-2 text-gray-700 outline-none shadow-sm cursor-pointer">
-            <option>Mode Garde (Direct)</option>
-            <option>Mode Staff (Pédagogique)</option>
-          </select>
-        </div>
 
         <div class="flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50 p-3">
           <div class="pr-2">

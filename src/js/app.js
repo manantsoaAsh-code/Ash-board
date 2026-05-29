@@ -1366,34 +1366,48 @@ function renderApp() {
 
   app.innerHTML = `
 
-    <header id="appHeader" class="bg-white border-b border-gray-100 p-4 top-0 z-50 transition-colors">
+<header id="appHeader" class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-gray-100/80 px-3 sm:px-4 py-3 transition-colors duration-300 w-full">
+  <div class="max-w-4xl mx-auto flex justify-between items-center gap-2 sm:gap-4">
+    
+    <div class="flex-1 min-w-0">
+      <h1 class="text-base font-bold tracking-tight text-gray-900 flex items-center gap-1.5 sm:gap-2">
+        <span class="flex items-center justify-center w-7 h-7 rounded-lg bg-blue-50 text-blue-600 shadow-sm border border-blue-100/50 shrink-0">
+          <i class="fa-solid fa-staff-snake text-sm"></i>
+        </span>
+        <span class="font-black tracking-tight truncate text-sm sm:text-base">Ash-board</span>
+        <span class="text-[9px] sm:text-[10px] font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">V1.0.0</span>
+      </h1>
+      <p class="hidden md:block text-[10px] text-gray-400 font-semibold tracking-wide uppercase mt-1">
+        Outils de gestion et de prise en charge optimale des patients
+      </p>
+      <p class="block md:hidden text-[9px] text-gray-400 font-bold tracking-wide uppercase mt-0.5 truncate">
+        Gestion clinique
+      </p>
+    </div>
 
-      <div class="max-w-4xl mx-auto flex justify-between items-center">
+    <div class="flex items-center gap-1 sm:gap-2 shrink-0">
+      
+      <button onclick="handleBackButton()" id="backBtn" class="hidden h-9 sm:h-10 px-2.5 sm:px-3 items-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs font-black uppercase tracking-wider text-gray-500 hover:text-gray-900 bg-gray-50 hover:bg-gray-100 rounded-xl transition-all duration-200 active:scale-[0.97]" title="Retour">
+        <i class="fa-solid fa-arrow-left text-xs"></i>
+        <span class="hidden xs:inline">Retour</span>
+      </button>
 
-        <div>
+      <button onclick="toggleDarkMode()" class="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-xl transition-all duration-200 active:scale-[0.95]" title="Mode Sombre">
+        <i id="themeIcon" class="fa-solid fa-moon text-base sm:text-lg"></i>
+      </button>
 
-          <h1 class="text-lg font-semibold tracking-tight text-gray-900"><i class="fa-solid fa-staff-snake text-blue-500 mr-2"></i>Ash-board <span class="text-gray-400">V1.0.0</span></h1>
+      <button onclick="toggleMenu()" id="menuButton" class="relative w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-50 rounded-xl transition-all duration-200 active:scale-[0.95]" title="Menu">
+        <span class="hamburger-icon">
+          <span></span>
+          <span></span>
+          <span></span>
+        </span>
+      </button>
+      
+    </div>
 
-          <p class="sm:block text-[10px] text-gray-400 font-medium leading-tight mt-1">Outils de gestion et de prise en charge optimale des patients</p>
-
-        </div>
-
-        <div class="flex items-center gap-3 sm:gap-6">
-
-          <button onclick="toggleDarkMode()" class="text-gray-400 hover:text-blue-500 transition" title="Mode Sombre"><i id="themeIcon" class="fa-solid fa-moon text-xl"></i></button>
-          <button onclick="handleBackButton()" id="backBtn" class="hidden text-sm text-gray-500 hover:text-black transition font-bold"><i class="fa-solid fa-arrow-left mr-1"></i> RETOUR</button>
-          <button onclick="toggleMenu()" id="menuButton" class="relative w-10 h-10 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-100" title="Menu">
-            <span class="hamburger-icon">
-              <span></span>
-              <span></span>
-              <span></span>
-            </span>
-          </button>
-        </div>
-
-      </div>
-
-    </header>
+  </div>
+</header>
 
 
 
