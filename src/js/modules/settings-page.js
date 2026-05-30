@@ -70,7 +70,7 @@ export function renderSettingsPage() {
       </div>
 
       <div class="medical-card p-4 space-y-3 border-t-4 border-t-red-500">
-        <button class="w-full flex justify-between items-center p-3 rounded-xl border border-gray-100 bg-gray-50 hover:bg-gray-100 transition">
+        <button onclick="openLegalPage()" class="w-full flex justify-between items-center p-3 rounded-xl border border-gray-100 bg-gray-50 hover:bg-gray-100 transition">
           <span class="font-bold text-xs text-gray-700"><i class="fa-solid fa-scale-balanced mr-2 text-gray-400"></i>CGU & Mentions Légales</span>
           <i class="fa-solid fa-chevron-right text-gray-400 text-xs"></i>
         </button>

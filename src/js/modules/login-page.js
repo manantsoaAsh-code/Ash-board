@@ -1,4 +1,4 @@
-export function renderLoginPage(email = '') {
+export function renderLoginPage(email = '', password = '', remember = false) {
   return `
    <section class="max-w-md mx-auto py-16 px-4">
   <div class="bg-white rounded-[32px] border border-gray-100 shadow-[0_24px_48px_-12px_rgba(0,0,0,0.04)] p-8 space-y-6">
@@ -11,34 +11,37 @@ export function renderLoginPage(email = '') {
     <div id="authError" class="min-h-[1.5rem] text-xs font-bold text-red-500 text-center bg-red-50/50 rounded-xl flex items-center justify-center empty:hidden px-3 py-1"></div>
 
     <div class="space-y-5">
-      <div class="space-y-2">
-        <label class="block text-[10px] uppercase tracking-[0.25em] text-gray-400 font-black">Adresse e-mail</label>
-        <div class="relative">
-          <input id="loginEmail" type="email" value="${email}" placeholder="firstuser@gmail.com" class="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-4 py-3 text-sm outline-none transition-all duration-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 font-medium text-gray-800" />
-        </div>
-      </div>
+      <p class="text-sm text-gray-500 text-center">Connectez-vous avec votre adresse e-mail et mot de passe, ou utilisez Google pour une connexion rapide.</p>
+    </div>
 
-      <div class="space-y-2">
-        <label class="block text-[10px] uppercase tracking-[0.25em] text-gray-400 font-black">Mot de passe</label>
-        <div class="relative">
-          <input id="loginPassword" type="password" placeholder="1234" class="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-4 py-3 text-sm outline-none transition-all duration-200 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 font-medium text-gray-800" />
-        </div>
+    <div class="space-y-4 pt-2">
+      <label class="block text-[10px] uppercase tracking-[0.35em] text-gray-400 font-bold">Adresse e-mail</label>
+      <input id="loginEmail" type="email" value="${email}" placeholder="votre@email.com" class="w-full rounded-3xl border border-gray-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200" />
+    </div>
+
+    <div class="space-y-4">
+      <label class="block text-[10px] uppercase tracking-[0.35em] text-gray-400 font-bold">Mot de passe</label>
+      <div class="relative">
+        <input id="loginPassword" type="password" value="${password}" placeholder="••••••••" class="w-full rounded-3xl border border-gray-200 px-4 py-3 pr-24 text-sm outline-none focus:ring-2 focus:ring-emerald-200" />
+        <button id="togglePasswordButton" type="button" onclick="togglePasswordVisibility('loginPassword','togglePasswordButton')" class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-blue-600 hover:text-blue-700">Afficher</button>
       </div>
     </div>
 
+    <div class="flex items-center justify-between gap-3 text-sm text-gray-600">
+      <label class="inline-flex items-center gap-2">
+        <input id="rememberMe" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500" ${remember ? 'checked' : ''} />
+        Se souvenir de moi
+      </label>
+     
+    </div>
+
     <div class="space-y-3 pt-2">
-      <button onclick="handleLoginSubmit()" class="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl py-3.5 text-xs font-black uppercase tracking-widest hover:from-blue-700 hover:to-blue-600 transition-all duration-200 shadow-lg shadow-blue-500/15 active:scale-[0.99]">
+      <button onclick="handleLoginSubmit()" class="w-full bg-emerald-600 text-white rounded-2xl py-3 text-xs font-bold uppercase tracking-[0.08em] hover:bg-emerald-700 transition-all duration-200 active:scale-[0.99]">
         Se connecter
       </button>
     </div>
 
-    <div class="relative flex py-2 items-center">
-      <div class="flex-grow border-t border-gray-100"></div>
-      <span class="flex-shrink mx-4 text-[10px] font-bold text-gray-300 uppercase tracking-widest">ou</span>
-      <div class="flex-grow border-t border-gray-100"></div>
-    </div>
-
-    <div class="space-y-4">
+    <div class="border-t border-gray-200 mt-4 pt-4">
       <button onclick="handleGoogleLogin()" class="w-full flex items-center justify-center gap-3 border border-gray-200 bg-white rounded-2xl py-3 text-xs font-bold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200 active:scale-[0.99]">
         <svg class="w-4 h-4" viewBox="0 0 24 24">
           <path fill="#EA4335" d="M12 5.04c1.64 0 3.12.56 4.28 1.67l3.2-3.2C17.52 1.58 14.96 1 12 1 7.35 1 3.39 3.67 1.5 7.56l3.76 2.92C6.15 7.24 8.85 5.04 12 5.04z"/>
@@ -48,12 +51,11 @@ export function renderLoginPage(email = '') {
         </svg>
         Continuer avec Google
       </button>
-      
-      <button onclick="showRegisterPage()" class="w-full text-xs font-bold text-blue-600 hover:text-blue-700 transition-colors py-2 text-center block">
-        Créer un nouveau compte
-      </button>
     </div>
 
+    <button onclick="showRegisterPage()" class="w-full text-xs font-bold text-blue-600 hover:text-blue-700 transition-colors py-2 text-center block">
+      Créer un nouveau compte professionnel
+    </button>
   </div>
 </section>
   `;
@@ -80,9 +82,11 @@ export function renderRegisterPage() {
 
         <div class="space-y-4">
           <label class="block text-[10px] uppercase tracking-[0.35em] text-gray-400 font-bold">Mot de passe</label>
-          <input id="registerPassword" type="password" placeholder="••••••••" class="w-full rounded-3xl border border-gray-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200" />
+          <div class="relative">
+            <input id="registerPassword" type="password" placeholder="••••••••" class="w-full rounded-3xl border border-gray-200 px-4 py-3 pr-24 text-sm outline-none focus:ring-2 focus:ring-emerald-200" />
+            <button id="registerTogglePasswordButton" type="button" onclick="togglePasswordVisibility('registerPassword','registerTogglePasswordButton')" class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-blue-600 hover:text-blue-700">Afficher</button>
+          </div>
         </div>
-
         <div class="space-y-4">
           <label class="block text-[10px] uppercase tracking-[0.35em] text-gray-400 font-bold">Confirmer le mot de passe</label>
           <input id="registerConfirmPassword" type="password" placeholder="••••••••" class="w-full rounded-3xl border border-gray-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-200" />

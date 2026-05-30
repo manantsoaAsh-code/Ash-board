@@ -6,8 +6,12 @@ import { renderProfilePage } from './modules/profile-page.js';
 import { renderSettingsPage } from './modules/settings-page.js';
 import { renderLoginPage, renderRegisterPage } from './modules/login-page.js';
 import { renderAboutPage } from './modules/about-page.js';
+import { renderCGUModal, renderLegalPage } from './components/cgu-modal.js';
+import { apiRequest } from './core/api-client.js';
 import { isAuthenticated, saveToken, clearToken } from './core/auth.js';
 import { storage } from './core/storage.js';
+
+const API_BASE = window.API_BASE || '';
 
 let patients = storage.get('med_dashboard_data_v2', []);
 let currentPatientId = null;
@@ -20,6 +24,8 @@ let spModalEvIdx = null;
 let spModalMode = 'edit';
 let paraSortOrder = 'recent';
 let paraFilterTag = 'all';
+let currentUserData = null;
+let showCGUModal = false;
 
 const PARA_TAGS_LIST = [
   { value: '', label: 'Sans tag', color: 'bg-gray-100 text-gray-500', border: '#e5e7eb' },
@@ -44,18 +50,30 @@ const SP_SYSTEMS = [
 
 const TAGS = ['Hospitalisé', 'Décédé', 'Sorti', 'Décharge', 'Fuite', 'Au bloc'];
 const AUTH_USER_KEY = 'ashboard_user';
+const SAVED_LOGIN_KEY = 'ashboard_saved_login';
 
 let currentUserEmail = localStorage.getItem(AUTH_USER_KEY) || null;
 let loginEmailPrefill = '';
 
 function saveToStorage() { storage.set('med_dashboard_data_v2', patients); }
 
+function getSavedLoginCredentials() {
+  return storage.get(SAVED_LOGIN_KEY, null);
+}
+
+function saveLoginCredentials(email, password) {
+  storage.set(SAVED_LOGIN_KEY, { email, password });
+}
+
+function clearSavedLoginCredentials() {
+  storage.remove(SAVED_LOGIN_KEY);
+}
+
 function getCurrentUserEmail() { return localStorage.getItem(AUTH_USER_KEY) || null; }
 
 function setCurrentUser(email) {
   currentUserEmail = email;
   localStorage.setItem(AUTH_USER_KEY, email);
-  saveToken(`${email}:${Date.now()}`);
 }
 
 function clearCurrentUser() {
@@ -433,40 +451,66 @@ function openPage(page) {
   }
 }
 
-function handleLoginSubmit() {
+async function handleLoginSubmit() {
   const emailInput = document.getElementById('loginEmail');
   const passwordInput = document.getElementById('loginPassword');
+  const rememberCheckbox = document.getElementById('rememberMe');
   const errorEl = document.getElementById('authError');
   if (!emailInput || !passwordInput || !errorEl) return;
 
   const email = emailInput.value.trim().toLowerCase();
   const password = passwordInput.value;
+  const remember = rememberCheckbox?.checked;
 
   if (!email || !password) {
     errorEl.textContent = 'Veuillez fournir votre e-mail et votre mot de passe.';
     return;
   }
 
-  if (email === 'firstuser@gmail.com' && password === '1234') {
+  try {
+    const formData = new URLSearchParams();
+    formData.append('username', email);
+    formData.append('password', password);
+
+    const response = await fetch(`/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('Identifiants invalides');
+    }
+
+    const result = await response.json();
+    saveToken(result.access_token);
     setCurrentUser(email);
+    if (remember) {
+      saveLoginCredentials(email, password);
+    } else {
+      clearSavedLoginCredentials();
+    }
+    
+    // Load user data and check CGU status
+    try {
+      const profile = await apiRequest('/api/user/profile');
+      currentUserData = profile;
+      if (!profile.cgu_accepted) {
+        showCGUModal = true;
+      }
+    } catch (err) {
+      console.warn('Impossible de charger le profil utilisateur', err);
+    }
+    
     currentView = 'dashboard';
     loginEmailPrefill = '';
     renderCurrentView();
-    return;
+  } catch (err) {
+    errorEl.textContent = 'Identifiant ou mot de passe incorrect.';
   }
-
-  if (validateLocalAccount(email, password)) {
-    setCurrentUser(email);
-    currentView = 'dashboard';
-    loginEmailPrefill = '';
-    renderCurrentView();
-    return;
-  }
-
-  errorEl.textContent = 'Identifiant ou mot de passe incorrect.';
 }
 
-function handleRegisterSubmit() {
+async function handleRegisterSubmit() {
   const emailInput = document.getElementById('registerEmail');
   const passwordInput = document.getElementById('registerPassword');
   const confirmInput = document.getElementById('registerConfirmPassword');
@@ -487,15 +531,124 @@ function handleRegisterSubmit() {
     return;
   }
 
-  const accounts = getStoredAccounts();
-  if (accounts[email]) {
-    errorEl.textContent = 'Ce compte existe déjà.';
-    return;
-  }
+  try {
+    const result = await apiRequest('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, full_name: email }),
+    });
 
-  saveLocalAccount(email, password);
-  loginEmailPrefill = email;
-  currentView = 'login';
+    loginEmailPrefill = email;
+    currentView = 'login';
+    renderCurrentView();
+
+    const loginErrorEl = document.getElementById('authError');
+    if (loginErrorEl) {
+      const message = result.detail || 'Votre compte a été créé. Vérifiez votre e-mail pour activer votre compte.';
+      loginErrorEl.classList.remove('text-red-500');
+      loginErrorEl.classList.add('text-teal-700');
+      if (result.verification_url) {
+        loginErrorEl.innerHTML = `${message} <a href="${result.verification_url}" class="text-teal-700 underline">Cliquez ici pour vérifier votre compte</a>`;
+      } else {
+        loginErrorEl.textContent = message;
+      }
+    }
+  } catch (err) {
+    errorEl.classList.remove('text-teal-700');
+    errorEl.classList.add('text-red-500');
+    errorEl.textContent = err.message || 'Impossible de créer le compte.';
+  }
+}
+
+async function loadProfile() {
+  try {
+    const profile = await apiRequest('/api/user/profile');
+    currentUserData = profile;
+    
+    // Check if CGU needs to be accepted
+    if (!profile.cgu_accepted) {
+      showCGUModal = true;
+      displayCGUModal();
+    }
+
+    const nameInput = document.getElementById('profileName');
+    const emailInput = document.getElementById('profileEmail');
+    const studyLevel = document.getElementById('profileStudyLevel');
+    const institution = document.getElementById('profileInstitution');
+
+    if (nameInput) nameInput.value = profile.full_name || '';
+    if (emailInput) emailInput.value = profile.email || '';
+    if (studyLevel) studyLevel.value = profile.study_level || '6ème année';
+    if (institution) institution.value = profile.institution || '';
+  } catch (err) {
+    console.error('Impossible de charger le profil', err);
+  }
+}
+
+async function saveProfile() {
+  const messageEl = document.getElementById('profileMessage');
+  const nameInput = document.getElementById('profileName');
+  const studyLevel = document.getElementById('profileStudyLevel');
+  const institution = document.getElementById('profileInstitution');
+
+  if (!nameInput || !studyLevel || !institution || !messageEl) return;
+
+  try {
+    const updated = await apiRequest('/api/user/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        full_name: nameInput.value.trim(),
+        study_level: studyLevel.value,
+        institution: institution.value.trim(),
+      }),
+    });
+
+    messageEl.textContent = 'Profil mis à jour avec succès.';
+    messageEl.classList.remove('hidden');
+    messageEl.classList.remove('text-red-500');
+    messageEl.classList.add('text-teal-700');
+    setTimeout(() => messageEl.classList.add('hidden'), 3000);
+  } catch (err) {
+    messageEl.textContent = err.message || 'Impossible de sauvegarder le profil.';
+    messageEl.classList.remove('hidden');
+    messageEl.classList.remove('text-teal-700');
+    messageEl.classList.add('text-red-500');
+  }
+}
+
+function displayCGUModal() {
+  const app = document.getElementById('app');
+  if (!app) return;
+  const modalHtml = renderCGUModal();
+  const modalDiv = document.createElement('div');
+  modalDiv.id = 'cguModalContainer';
+  modalDiv.innerHTML = modalHtml;
+  app.appendChild(modalDiv);
+}
+
+async function acceptCGU() {
+  try {
+    await apiRequest('/api/user/accept-cgu', { method: 'POST' });
+    if (currentUserData) {
+      currentUserData.cgu_accepted = true;
+    }
+    const modalContainer = document.getElementById('cguModalContainer');
+    if (modalContainer) {
+      modalContainer.remove();
+    }
+    showCGUModal = false;
+  } catch (err) {
+    alert('Erreur lors de l\'enregistrement de votre consentement.');
+    console.error(err);
+  }
+}
+
+function rejectCGU() {
+  alert('Vous devez accepter les CGU pour continuer.');
+  handleLogout();
+}
+
+function openLegalPage() {
+  currentView = 'legal';
   renderCurrentView();
 }
 
@@ -511,9 +664,64 @@ function showRegisterPage() {
 }
 
 function handleGoogleLogin() {
+  const redirectUri = window.location.origin;
+  window.location.href = `/api/auth/google/login?redirect_uri=${encodeURIComponent(redirectUri)}`;
+}
+
+async function processGoogleAuthCode() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  if (!code) {
+    return;
+  }
+
   const errorEl = document.getElementById('authError');
-  if (!errorEl) return;
-  errorEl.textContent = 'Connexion Google disponible plus tard dans le backend.';
+  try {
+    const response = await fetch(`/api/auth/google/callback?code=${encodeURIComponent(code)}&redirect_uri=${encodeURIComponent(window.location.origin)}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.detail || 'La connexion Google a échoué.');
+    }
+
+    const result = await response.json();
+    if (!result.access_token || !result.email) {
+      throw new Error('Réponse invalide du serveur de connexion.');
+    }
+
+    saveToken(result.access_token);
+    setCurrentUser(result.email);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    currentView = 'dashboard';
+    renderCurrentView();
+    // If server returned a temporary password (created at signup), show it to the user
+    if (result.temp_password) {
+      const msg = `Compte créé avec succès. Mot de passe temporaire : ${result.temp_password} — changez-le dans les paramètres.`;
+      const errorEl = document.getElementById('authError');
+      if (errorEl) {
+        errorEl.textContent = msg;
+      } else {
+        alert(msg);
+      }
+    }
+  } catch (err) {
+    if (errorEl) {
+      errorEl.textContent = err.message || 'La connexion Google a échoué.';
+    }
+  }
+}
+
+function togglePasswordVisibility(inputId = 'loginPassword', toggleButtonId = 'togglePasswordButton') {
+  const passwordInput = document.getElementById(inputId);
+  const toggleButton = document.getElementById(toggleButtonId);
+  if (!passwordInput || !toggleButton) return;
+
+  if (passwordInput.type === 'password') {
+    passwordInput.type = 'text';
+    toggleButton.textContent = 'Masquer';
+  } else {
+    passwordInput.type = 'password';
+    toggleButton.textContent = 'Afficher';
+  }
 }
 
 function handleLogout() {
@@ -583,7 +791,11 @@ function renderCurrentView() {
     console.log('[renderCurrentView] Showing login page');
     pageView.classList.remove('hidden');
     backBtn.classList.add('hidden');
-    pageView.innerHTML = renderLoginPage(loginEmailPrefill || getCurrentUserEmail() || '');
+    const savedLogin = getSavedLoginCredentials();
+    const prefillEmail = loginEmailPrefill || savedLogin?.email || getCurrentUserEmail() || '';
+    const prefillPassword = savedLogin?.password || '';
+    const remember = Boolean(savedLogin?.email && savedLogin?.password);
+    pageView.innerHTML = renderLoginPage(prefillEmail, prefillPassword, remember);
     return;
   }
 
@@ -602,12 +814,21 @@ function renderCurrentView() {
   if (currentView === 'profile') {
     console.log('[renderCurrentView] Rendering profile page');
     pageView.innerHTML = renderProfilePage();
+    loadProfile();
   } else if (currentView === 'settings') {
     console.log('[renderCurrentView] Rendering settings page');
     pageView.innerHTML = renderSettingsPage();
+  } else if (currentView === 'legal') {
+    console.log('[renderCurrentView] Rendering legal page');
+    pageView.innerHTML = renderLegalPage();
   } else {
     console.log('[renderCurrentView] Rendering about page');
     pageView.innerHTML = renderAboutPage();
+  }
+
+  // Show CGU modal if needed
+  if (showCGUModal) {
+    displayCGUModal();
   }
 }
 
@@ -1818,11 +2039,12 @@ function attachMenuHandlers() {
   console.log('[attachMenuHandlers] Event listener attached successfully');
 }
 
-function initializeApp() {
+async function initializeApp() {
 
   renderApp();
   attachMenuHandlers();
 
+  await processGoogleAuthCode();
   currentView = isAuthenticated() ? 'dashboard' : 'login';
 
   if (patients.length) {
@@ -1875,6 +2097,12 @@ Object.assign(window, {
   showRegisterPage,
   handleGoogleLogin,
   handleLogout,
+  togglePasswordVisibility,
+  saveProfile,
+  acceptCGU,
+  rejectCGU,
+  openLegalPage,
+  displayCGUModal,
 
   openShareModal,
 

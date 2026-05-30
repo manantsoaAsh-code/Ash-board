@@ -1,21 +1,21 @@
 export const API_ROUTES = {
   auth: {
-    login: '/auth/login',
-    register: '/auth/register',
-    logout: '/auth/logout',
+    login: '/api/auth/login',
+    register: '/api/auth/register',
+    logout: '/api/auth/logout',
   },
   patients: {
-    list: '/patients',
-    detail: (id) => `/patients/${id}`,
-    create: '/patients',
-    update: (id) => `/patients/${id}`,
+    list: '/api/patients',
+    detail: (id) => `/api/patients/${id}`,
+    create: '/api/patients',
+    update: (id) => `/api/patients/${id}`,
   },
   ai: {
-    chat: '/ai/chat',
-    suggestions: '/ai/suggestions',
+    chat: '/api/ai/chat',
+    suggestions: '/api/ai/suggestions',
   },
   user: {
-    profile: '/user/profile',
-    settings: '/user/settings',
+    profile: '/api/user/profile',
+    settings: '/api/user/settings',
   },
 };

@@ -1,5 +1,7 @@
 import { getToken } from './auth.js';
 
+const API_BASE = window.API_BASE || '';
+
 export async function apiRequest(endpoint, options = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -12,7 +14,13 @@ export async function apiRequest(endpoint, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(endpoint, {
+  // Prefix local API routes with API_BASE when starting with /api
+  let url = endpoint;
+  if (typeof endpoint === 'string' && endpoint.startsWith('/api')) {
+    url = `${API_BASE}${endpoint}`;
+  }
+
+  const response = await fetch(url, {
     ...options,
     headers,
   });

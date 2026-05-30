@@ -23,4 +23,14 @@ dist-ssr
 *.sln
 *.sw?
 
-*plan.md
+plan.md
+
+# Local environment
+backend/.env
+
+# Local database
+backend.db
+
+# Python cache and bytecode
+**/__pycache__/
+*.py[cod]
